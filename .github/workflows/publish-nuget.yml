@@ -1,0 +1,328 @@
+name: Publish NuGet packages
+
+# Builds the 16 public BHoM packages on the dates in calendar.json and publishes them to nuget.org
+# through Trusted Publishing. Only the publish job can obtain a nuget.org key, and it runs no repository
+# code. A run whose events are all alphas publishes on the nuget-org-auto environment without approval;
+# any other run waits for a release-team approval on the nuget-org environment.
+
+on:
+  schedule:
+    - cron: '17 5 * * *'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version from calendar.json, for example 10.1.0-alpha.1.0
+        required: true
+        type: string
+      rehearsal:
+        description: Rehearsal. Waives the date and completeness rules and pushes to a folder on the runner, not to nuget.org
+        required: false
+        type: boolean
+        default: false
+
+permissions: {}
+
+jobs:
+  plan:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    timeout-minutes: 5
+    outputs:
+      events: ${{ steps.plan.outputs.events }}
+      rehearsal: ${{ steps.plan.outputs.rehearsal }}
+      approval: ${{ steps.plan.outputs.approval }}
+      planned_on: ${{ steps.plan.outputs.planned_on }}
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Check calendar.json
+        run: ./scripts/Test-Calendar.ps1
+
+      - name: Choose events
+        id: plan
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+          INPUT_REHEARSAL: ${{ inputs.rehearsal }}
+        run: |
+          Import-Module ./scripts/Plan.psm1
+          Invoke-Plan -CalendarPath calendar.json -ConfigPath config/repos.json
+
+  build:
+    needs: plan
+    if: needs.plan.outputs.events != '[]'
+    runs-on: windows-2022
+    permissions:
+      contents: read
+    # 15 minutes per event, and a day holds at most an alpha and a beta.
+    timeout-minutes: 35
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      # The only step in this job with a token: about 48 API calls per event, against an anonymous
+      # limit of 60 an hour. The token is read-only and reaches nothing the build steps run.
+      - name: Pin commits
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          EVENTS: ${{ needs.plan.outputs.events }}
+        run: |
+          Import-Module ./scripts/Release.psm1
+          $events = $env:EVENTS | ConvertFrom-Json
+          $pins = Join-Path $env:RUNNER_TEMP 'pins'
+          New-Item -ItemType Directory -Force -Path $pins | Out-Null
+          foreach ($e in @($events)) {
+            ./scripts/Get-PinnedCommits.ps1 -ConfigPath config/repos.json -CutoffUtc (Format-EventCutoff $e.cutoff) -OutFile (Join-Path $pins "$($e.version).json")
+          }
+
+      - name: Build and pack
+        env:
+          EVENTS: ${{ needs.plan.outputs.events }}
+        run: |
+          $events = $env:EVENTS | ConvertFrom-Json
+          foreach ($e in @($events)) {
+            $out = Join-Path (Join-Path $env:RUNNER_TEMP 'release') $e.version
+            $pin = Join-Path (Join-Path $env:RUNNER_TEMP 'pins') "$($e.version).json"
+            ./scripts/Invoke-BuildAndPack.ps1 -ConfigPath config/repos.json -PinnedPath $pin -Version $e.version -Sprint ([int]$e.sprint) -OutDir $out -TimeoutMinutes 10
+            Copy-Item -LiteralPath $pin -Destination (Join-Path $out 'pinned-commits.json')
+          }
+
+      - name: Upload release
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release
+          path: ${{ runner.temp }}/release
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload build logs
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: build-logs
+          path: |
+            ${{ runner.temp }}/release
+            ${{ runner.temp }}/pins
+          if-no-files-found: ignore
+          retention-days: 7
+
+  validate:
+    needs: [plan, build]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    timeout-minutes: 15
+    outputs:
+      to_publish: ${{ steps.validate.outputs.to_publish }}
+      count: ${{ steps.validate.outputs.count }}
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Download release
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release
+          path: ${{ runner.temp }}/release
+
+      - name: Check packages and compare with nuget.org
+        id: validate
+        env:
+          EVENTS: ${{ needs.plan.outputs.events }}
+        run: |
+          Import-Module ./scripts/Validate.psm1
+          Invoke-Validate -ConfigPath config/repos.json -ReleaseRoot (Join-Path $env:RUNNER_TEMP 'release') -EventsJson $env:EVENTS
+
+  publish:
+    needs: [plan, validate]
+    if: needs.validate.outputs.count != '0'
+    runs-on: ubuntu-24.04
+    # Anything other than the exact string false takes the environment that requires approval.
+    environment: ${{ needs.plan.outputs.approval == 'false' && 'nuget-org-auto' || 'nuget-org' }}
+    permissions:
+      contents: read
+      id-token: write
+    timeout-minutes: 30
+    outputs:
+      results: ${{ steps.push.outputs.results }}
+    defaults:
+      run:
+        shell: bash
+    # No checkout: this job runs only pinned actions and the shell below.
+    steps:
+      # Plan is not run again by "Re-run failed jobs", so a re-run on a later day would publish from the
+      # calendar as it was on the day the run started. A first attempt approved on a later day is allowed.
+      - name: Refuse a re-run from an earlier day
+        env:
+          PLANNED_ON: ${{ needs.plan.outputs.planned_on }}
+        run: |
+          set -euo pipefail
+          today=$(date -u +%F)
+          if [ "$GITHUB_RUN_ATTEMPT" != "1" ] && [ "$PLANNED_ON" != "$today" ]; then
+            echo "::error::This run was planned on ${PLANNED_ON:-an unknown day} and today is $today. A run is not re-run on a later day: start a new run."
+            exit 1
+          fi
+
+      - name: Download release
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release
+          path: ${{ runner.temp }}/release
+
+      - name: Check files against the validated list
+        env:
+          TO_PUBLISH: ${{ needs.validate.outputs.to_publish }}
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/release"
+          jq -e 'type == "array" and length > 0' <<<"$TO_PUBLISH" > /dev/null
+          jq -r '.[] | [.file, .sha256] | @tsv' <<<"$TO_PUBLISH" | while IFS=$'\t' read -r file sha; do
+            case "$file" in
+              /* | *..* ) echo "::error::Unsafe path in to_publish: $file"; exit 1 ;;
+            esac
+            actual=$(sha256sum -- "$file" | cut -d' ' -f1)
+            if [ "$actual" != "$sha" ]; then echo "::error::$file has SHA-256 $actual, validate approved $sha"; exit 1; fi
+          done
+          echo "All $(jq length <<<"$TO_PUBLISH") files match the validated list."
+
+      - name: Log in to nuget.org
+        id: login
+        uses: NuGet/login@8d196754b4036150537f80ac539e15c2f1028841 # v1.2.0
+        with:
+          user: ${{ vars.NUGET_USER }}
+
+      - name: Push
+        id: push
+        env:
+          NUGET_API_KEY: ${{ steps.login.outputs.NUGET_API_KEY }}
+          TO_PUBLISH: ${{ needs.validate.outputs.to_publish }}
+          REHEARSAL: ${{ needs.plan.outputs.rehearsal }}
+        run: |
+          set -euo pipefail
+          case "$REHEARSAL" in
+            true | false) ;;
+            *) echo "::error::rehearsal is '$REHEARSAL', not true or false, so nothing is pushed."; exit 1 ;;
+          esac
+          release="$RUNNER_TEMP/release"
+          # dotnet reads NuGet.Config and global.json from its working folder and every folder above it,
+          # so it runs from an empty folder outside the artifact and is given absolute package paths.
+          work=$(mktemp -d)
+          cd "$work"
+          results="$RUNNER_TEMP/push-results.jsonl"
+          : > "$results"
+          feed="$RUNNER_TEMP/rehearsal-feed"
+          if [ "$REHEARSAL" = "true" ]; then mkdir -p "$feed"; fi
+          jq -r '.[] | [.id, .version, .file] | @tsv' <<<"$TO_PUBLISH" | while IFS=$'\t' read -r id version file; do
+            file="$release/$file"
+            if [ "$REHEARSAL" = "true" ]; then
+              dotnet nuget push "$file" --source "$feed"
+              state=pushed
+            else
+              lid=$(tr '[:upper:]' '[:lower:]' <<<"$id"); lver=$(tr '[:upper:]' '[:lower:]' <<<"$version")
+              code=$(curl -sS -o "$RUNNER_TEMP/index.json" -w '%{http_code}' "https://api.nuget.org/v3-flatcontainer/$lid/index.json")
+              if [ "$code" = "200" ] && jq -e --arg v "$lver" '.versions | index($v)' "$RUNNER_TEMP/index.json" > /dev/null; then
+                state=already-present
+              elif [ "$code" = "200" ] || [ "$code" = "404" ]; then
+                dotnet nuget push "$file" --source https://api.nuget.org/v3/index.json --api-key "$NUGET_API_KEY" --skip-duplicate
+                state=pushed
+              else
+                echo "::error::nuget.org flat container returned HTTP $code for $id"; exit 1
+              fi
+            fi
+            echo "$id $version: $state"
+            jq -nc --arg id "$id" --arg version "$version" --arg state "$state" '{id: $id, version: $version, state: $state}' >> "$results"
+          done
+          echo "results=$(jq -sc . "$results")" >> "$GITHUB_OUTPUT"
+
+      # Rehearsal only, and last: the rehearsal folder exists only on this runner, so this is the only
+      # place its contents can be checked against the validated list.
+      - name: Check the rehearsal folder
+        if: needs.plan.outputs.rehearsal == 'true'
+        env:
+          TO_PUBLISH: ${{ needs.validate.outputs.to_publish }}
+        run: |
+          set -euo pipefail
+          feed="$RUNNER_TEMP/rehearsal-feed"
+          expected=$(cd "$RUNNER_TEMP/release" && jq -r '.[] | [.file, .sha256] | @tsv' <<<"$TO_PUBLISH" | while IFS=$'\t' read -r file sha; do
+            printf '%s %s\n' "$(basename "$file" | tr '[:upper:]' '[:lower:]')" "$sha"; done | sort)
+          actual=$(find "$feed" -type f -name '*.nupkg' -print0 | while IFS= read -r -d '' f; do
+            printf '%s %s\n' "$(basename "$f" | tr '[:upper:]' '[:lower:]')" "$(sha256sum -- "$f" | cut -d' ' -f1)"; done | sort)
+          echo "$actual"
+          if [ "$expected" != "$actual" ]; then
+            echo "::error::The rehearsal folder does not match the validated list."
+            diff <(echo "$expected") <(echo "$actual") || true
+            exit 1
+          fi
+          echo "The rehearsal folder holds exactly the $(jq length <<<"$TO_PUBLISH") validated packages."
+
+  verify:
+    needs: [plan, validate, publish]
+    if: always() && needs.validate.result == 'success' && (needs.publish.result == 'success' || needs.publish.result == 'skipped')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    timeout-minutes: 35
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Download release
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release
+          path: ${{ runner.temp }}/release
+
+      - name: Check nuget.org
+        env:
+          EVENTS: ${{ needs.plan.outputs.events }}
+          REHEARSAL: ${{ needs.plan.outputs.rehearsal }}
+          TO_PUBLISH: ${{ needs.validate.outputs.to_publish }}
+          RESULTS: ${{ needs.publish.outputs.results }}
+        run: |
+          Import-Module ./scripts/Validate.psm1
+          $results = if ($env:RESULTS) { $env:RESULTS } else { '[]' }
+          Invoke-Verify -ConfigPath config/repos.json -ReleaseRoot (Join-Path $env:RUNNER_TEMP 'release') -EventsJson $env:EVENTS `
+            -Rehearsal ($env:REHEARSAL -eq 'true') -ToPublishJson $env:TO_PUBLISH -PublishResultsJson $results -TimeoutMinutes 30
+
+  alert:
+    needs: [plan, build, validate, publish, verify]
+    if: always() && (contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled'))
+    runs-on: ubuntu-24.04
+    permissions:
+      issues: write
+    timeout-minutes: 5
+    steps:
+      - name: Open an issue
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NEEDS: ${{ toJSON(needs) }}
+          MENTION: ${{ vars.RELEASE_TEAM_MENTION }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          TRIGGER: ${{ github.event_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          failed=$(jq -r '[to_entries[] | select(.value.result == "failure" or .value.result == "cancelled") | "\(.key) (\(.value.result))"] | join(", ")' <<<"$NEEDS")
+          body="${MENTION:+$MENTION }The $TRIGGER run of publish-nuget.yml did not finish: $failed. $RUN_URL"
+          gh issue create --repo "$GITHUB_REPOSITORY" --title "publish-nuget.yml failed: $failed" --body "$body"
