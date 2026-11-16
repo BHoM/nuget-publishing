@@ -1,0 +1,70 @@
+{
+  "source": "The commits the develop branches of the 16 pointed at on 2026-11-06T05:00:00Z, recorded for the 10.0.0-alpha.3.0 build of that day",
+  "cutoffUtc": "2026-11-06T05:00:00Z",
+  "repos": [
+    {
+      "repo": "BHoM/BHoM",
+      "sha": "d5c112ef3d642b32ec8ceb77cce4910643c005b3"
+    },
+    {
+      "repo": "BHoM/BHoM_Engine",
+      "sha": "b5984c7a8a4209005f53b06341e214095bb0afbe"
+    },
+    {
+      "repo": "BHoM/BHoM_Adapter",
+      "sha": "4ce149cc0ceca18bc2c098ed85b707805206eb52"
+    },
+    {
+      "repo": "BHoM/BHoMAnalytics_Toolkit",
+      "sha": "361c6b2487e66bcb02f989cf0835fa0ca6306cb9"
+    },
+    {
+      "repo": "BHoM/CSharp_Toolkit",
+      "sha": "afada8f6e75e8039f4537175c34e6852c914b6ab"
+    },
+    {
+      "repo": "BHoM/Excel_Toolkit",
+      "sha": "7f21db51a93ba5606a195830f1b898783d8e6f28"
+    },
+    {
+      "repo": "BHoM/File_Toolkit",
+      "sha": "76a2b4ae422bc1ada3c68b5b09370107dd00df2a"
+    },
+    {
+      "repo": "BHoM/LadybugTools_Toolkit",
+      "sha": "3f5e932bfe2075ed7965ded274a0181cb50da2a7"
+    },
+    {
+      "repo": "BHoM/LifeCycleAssessment_Toolkit",
+      "sha": "632fb7589dc590098ba7b68c8cc7e014659b3cf1"
+    },
+    {
+      "repo": "BHoM/Mongo_Toolkit",
+      "sha": "0681a2431b18a7311639d23a90db7b401d3b7de7"
+    },
+    {
+      "repo": "BHoM/PowerPoint_Toolkit",
+      "sha": "a070e108865ca4e21aa23e849cdada8679676cbe"
+    },
+    {
+      "repo": "BHoM/Python_Toolkit",
+      "sha": "ee1f40d098b73f1bd3031c86a71486d681b0df00"
+    },
+    {
+      "repo": "BHoM/SQL_Toolkit",
+      "sha": "1654bab43c643269c4ed7bbb454db00ef3ab3232"
+    },
+    {
+      "repo": "BHoM/TriangleNet_Toolkit",
+      "sha": "49aed7e795cdda916ae3a57817322581be6e65e1"
+    },
+    {
+      "repo": "BHoM/Localisation_Toolkit",
+      "sha": "a99a3e78f6d0871be96be04c8df32ede4af81a38"
+    },
+    {
+      "repo": "BHoM/BHoM_UI",
+      "sha": "b77dbc785a0aa7e1e7bf8ca7079fd8753458c6af"
+    }
+  ]
+}

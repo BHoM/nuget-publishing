@@ -1,0 +1,25 @@
+{
+  "nugetOrgFlatContainer": "https://api.nuget.org/v3-flatcontainer",
+  "assets": {
+    "icon": {"path": "assets/icon.png", "referenceSha256": "c841a6d75edd0c216075df32e3c3e3ec0012d3e85b8b566e39fa0ed02d93b6fd"},
+    "licence": {"path": "assets/licence.txt", "referenceSha256": "cfb70a2be6b545997020a3b024d0adcb1a4f06cd4bf1029e5a24ee7825a1785a"}
+  },
+  "repos": [
+    { "repo": "BHoM/BHoM", "config": "", "packageId": "BHoM" },
+    { "repo": "BHoM/BHoM_Engine", "config": "", "packageId": "BHoM.Engine" },
+    { "repo": "BHoM/BHoM_Adapter", "config": "", "packageId": "BHoM.Adapter" },
+    { "repo": "BHoM/BHoMAnalytics_Toolkit", "config": "", "packageId": "BHoM.Interop.Analytics" },
+    { "repo": "BHoM/CSharp_Toolkit", "config": "", "packageId": "BHoM.Interop.CSharp" },
+    { "repo": "BHoM/Excel_Toolkit", "config": "", "packageId": "BHoM.Interop.Excel" },
+    { "repo": "BHoM/File_Toolkit", "config": "", "packageId": "BHoM.Interop.File" },
+    { "repo": "BHoM/LadybugTools_Toolkit", "config": "", "packageId": "BHoM.Interop.LadybugTools" },
+    { "repo": "BHoM/LifeCycleAssessment_Toolkit", "config": "", "packageId": "BHoM.Interop.LifeCycleAssessment" },
+    { "repo": "BHoM/Mongo_Toolkit", "config": "", "packageId": "BHoM.Interop.Mongo" },
+    { "repo": "BHoM/PowerPoint_Toolkit", "config": "", "packageId": "BHoM.Interop.PowerPoint" },
+    { "repo": "BHoM/Python_Toolkit", "config": "", "packageId": "BHoM.Interop.Python" },
+    { "repo": "BHoM/SQL_Toolkit", "config": "ZeroCodeTool", "packageId": "BHoM.Interop.SQL" },
+    { "repo": "BHoM/TriangleNet_Toolkit", "config": "", "packageId": "BHoM.Interop.TriangleNet" },
+    { "repo": "BHoM/Localisation_Toolkit", "config": "", "packageId": "BHoM.Interop.Localisation" },
+    { "repo": "BHoM/BHoM_UI", "config": "", "packageId": "BHoM.UI" }
+  ]
+}

@@ -1,0 +1,40 @@
+name: Watch nuget.org
+
+# Once a day, after the approval deadline: is every recent event's version complete on nuget.org, skipped
+# events included, and does the calendar run out within six weeks? Opens an issue for each; issues are
+# closed by hand.
+
+on:
+  schedule:
+    - cron: '37 12 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  watch:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      issues: write
+    timeout-minutes: 10
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Check calendar.json
+        run: ./scripts/Test-Calendar.ps1
+
+      - name: Check nuget.org and the calendar
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MENTION: ${{ vars.RELEASE_TEAM_MENTION }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          Import-Module ./scripts/Watch.psm1
+          Invoke-Watch -CalendarPath calendar.json -ConfigPath config/repos.json
