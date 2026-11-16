@@ -16,11 +16,11 @@ Approve a run on the day it started (UTC). A run uses `calendar.json` as it was 
 
 1. Open the repository's Actions tab and select the waiting `Publish NuGet packages` run.
 2. Check that it started today, UTC, from `main`.
-3. Check that each version in its summary is in `calendar.json` on `main`, dated today or, for a run started by hand, earlier, and not marked `skip`.
+3. Check that each version in its summary is in `calendar.json` on `main`, dated today or, for a run started by hand, earlier, and not marked `skip`. A rehearsal, shown in the summary as `Rehearsal: True`, may have any date.
 4. Check that the summary lists the packages you expect to be pushed, at that version.
 5. If all of these hold, click "Review deployments", tick the environment, then click "Approve and deploy". If any does not, click "Reject".
 
-An administrator can make alphas wait for approval too, by adding required reviewers to the `nuget-org-auto` environment in the repository settings, and removing them to make alphas automatic again.
+Until the required reviewers are removed from the `nuget-org-auto` environment, alphas wait for approval too, and are approved in the same way. An administrator adds or removes them in the repository settings: with reviewers, alphas wait; without, they are pushed at once.
 
 ## The calendar
 
