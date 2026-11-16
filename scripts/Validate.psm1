@@ -16,6 +16,9 @@ function Read-PackageNuspec {
     <#
     .SYNOPSIS
     Reads the ID, version and dependencies from the nuspec at the root of a package held in memory.
+
+    .DESCRIPTION
+    metadata maps every other element under <metadata> to its text and attributes, for comparisons.
     #>
     [CmdletBinding()]
     param([Parameter(Mandatory)][byte[]]$Bytes, [Parameter(Mandatory)][string]$Label)
@@ -47,8 +50,17 @@ function Read-PackageNuspec {
     $version = @($meta.SelectNodes("*[local-name()='version']"))
     if ($id.Count -ne 1 -or $version.Count -ne 1) { throw "${Label}: nuspec needs exactly one id and one version." }
     $id = $id[0]; $version = $version[0]
-    $deps = @($meta.SelectNodes("*[local-name()='dependencies']//*[local-name()='dependency']") | ForEach-Object { [pscustomobject]@{ id = $_.GetAttribute('id'); version = $_.GetAttribute('version') } })
-    return [pscustomobject]@{ id = $id.InnerText.Trim(); version = $version.InnerText.Trim(); dependencies = $deps }
+    $deps = @($meta.SelectNodes("*[local-name()='dependencies']//*[local-name()='dependency']") | ForEach-Object {
+            $framework = if ($_.ParentNode.LocalName -ceq 'group') { $_.ParentNode.GetAttribute('targetFramework') } else { '' }
+            [pscustomobject]@{ id = $_.GetAttribute('id'); version = $_.GetAttribute('version'); framework = $framework }
+        })
+    $fields = [ordered]@{}
+    foreach ($e in @($meta.ChildNodes | Where-Object { $_.NodeType -eq 'Element' -and $_.LocalName -cne 'dependencies' })) {
+        $attributes = @($e.Attributes | Sort-Object Name | ForEach-Object { "$($_.Name)=$($_.Value)" }) -join ' '
+        $value = $e.InnerText.Trim() + $(if ($attributes) { " [$attributes]" } else { '' })
+        $fields[$e.LocalName] = if ($fields.Contains($e.LocalName)) { "$($fields[$e.LocalName]); $value" } else { $value }
+    }
+    return [pscustomobject]@{ id = $id.InnerText.Trim(); version = $version.InnerText.Trim(); dependencies = $deps; metadata = $fields }
 }
 
 function Get-DependencyTier {
@@ -280,4 +292,4 @@ function Invoke-Verify {
     }
 }
 
-Export-ModuleMember -Function Read-PackageNuspec, Get-DependencyTier, Get-PublishList, Wait-PackageSet, Invoke-Validate, Invoke-Verify
+Export-ModuleMember -Function Read-PackageNuspec, Get-NuGetOrgPackage, Get-DependencyTier, Get-PublishList, Wait-PackageSet, Invoke-Validate, Invoke-Verify

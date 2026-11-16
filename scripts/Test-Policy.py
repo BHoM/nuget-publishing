@@ -8,7 +8,11 @@ Prints one line per breach, tagged with its rule, and exits 1 if there is any. R
                 on pull_request only; no pull_request_target anywhere; no other workflow file
   id-token      id-token: write only on job publish of publish-nuget.yml, never at workflow level
   environment   an environment only on that job, and it is the one expression that chooses nuget-org-auto
-                for a run of alphas only and nuget-org, which requires approval, for anything else
+                for a run of alphas only and nuget-org, which requires approval, for anything else; job plan
+                passes approval and planned_on straight from its one step with id plan
+  publish       job publish holds no permission beyond contents: read and id-token: write, uses only
+                download-artifact and NuGet/login, so no checkout, and no run: step mentions git, gh, a
+                script file, the workspace or a github.com address
   uses          every uses: is owner/repo@<40 hex>; no local or Docker actions
   downloads     every download-artifact has name: and a path: under ${{ runner.temp }} with no ..
   secrets       no secrets reference except secrets.GITHUB_TOKEN
@@ -45,6 +49,10 @@ URL_HOSTS = {
     "github.com", "api.github.com", "api.nuget.org", "www.nuget.org", "fsf.org", "www.gnu.org", "bhom.xyz",
 }
 PUBLISH_ENVIRONMENT = "${{ needs.plan.outputs.approval == 'false' && 'nuget-org-auto' || 'nuget-org' }}"
+PLAN_OUTPUTS = {name: f"${{{{ steps.plan.outputs.{name} }}}}" for name in ("approval", "planned_on")}
+PUBLISH_PERMISSIONS = {"contents": "read", "id-token": "write"}
+PUBLISH_ACTIONS = {"actions/download-artifact", "nuget/login"}
+REPOSITORY_CODE = re.compile(r"\b(git|gh)\b|scripts/|\.(ps1|psm1|py)\b|GITHUB_WORKSPACE|github\.com/", re.IGNORECASE)
 PINNED_USES = re.compile(r"\A[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+@[0-9a-f]{40}\Z")
 EXPRESSION = re.compile(r"\$\{\{(.*?)\}\}", re.DOTALL)
 SECRETS_REF = re.compile(r"\bsecrets\b(?!\s*\.\s*GITHUB_TOKEN\b)", re.IGNORECASE)
@@ -119,6 +127,8 @@ def check_workflow(name, doc, errors):
         err("triggers", "is not a workflow mapping")
         return
     jobs = doc.get("jobs") or {}
+    if name == "publish-nuget.yml" and "plan" not in jobs:
+        err("environment", "has no job plan, which sets the approval output the environment is chosen by")
 
     found = triggers_of(doc)
     if "pull_request_target" in found:
@@ -144,6 +154,21 @@ def check_workflow(name, doc, errors):
         elif env is not None:
             err("environment", f"job {job_id} has environment {env_name!r}; only job publish of publish-nuget.yml may have one")
 
+        if name == "publish-nuget.yml" and job_id == "plan":
+            outputs = job.get("outputs") or {}
+            for output, value in PLAN_OUTPUTS.items():
+                if outputs.get(output) != value:
+                    err("environment", f"job plan has output {output} {outputs.get(output)!r}, must be exactly {value!r}")
+            ids = [str((step or {}).get("id", "")).lower() for step in job.get("steps") or []]
+            if ids.count("plan") != 1:
+                err("environment", f"job plan has {ids.count('plan')} steps with id plan, must have exactly one")
+
+        if allowed:
+            perms = job.get("permissions")
+            granted = {str(k): str(v).lower() for k, v in perms.items()} if isinstance(perms, dict) else None
+            if granted is None or any(PUBLISH_PERMISSIONS.get(k) != v for k, v in granted.items()):
+                err("publish", f"job publish has permissions {perms!r}; it may hold only {PUBLISH_PERMISSIONS}")
+
         if "uses" in job:
             err("uses", f"job {job_id} calls a reusable workflow ({job['uses']})")
         for i, step in enumerate(job.get("steps") or []):
@@ -159,9 +184,13 @@ def check_workflow(name, doc, errors):
                     err("downloads", f"{label} downloads without a name")
                 if not re.match(r"\A\$\{\{\s*runner\.temp\s*\}\}", dl_path) or ".." in dl_path:
                     err("downloads", f"{label} downloads to '{dl_path}', not a path under ${{{{ runner.temp }}}} without ..")
+            if allowed and uses is not None and str(uses).split("@")[0].lower() not in PUBLISH_ACTIONS:
+                err("publish", f"{label} uses '{uses}'; job publish may use only {sorted(PUBLISH_ACTIONS)}")
             run = step.get("run")
             if isinstance(run, str) and "${{" in run:
                 err("run", f"{label} has ${{{{ inside run:")
+            if allowed and isinstance(run, str) and REPOSITORY_CODE.search(run):
+                err("publish", f"{label} mentions '{REPOSITORY_CODE.search(run).group(0)}'; job publish runs no repository code")
 
     if has_key(doc, "secrets"):
         err("secrets", "has a secrets: key")

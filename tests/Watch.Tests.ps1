@@ -120,6 +120,15 @@ $t.State.issues.Add([pscustomobject]@{ number = 1; title = 'NuGet 10.1.0-alpha.1
 $a = Invoke-WatchCheck -Calendar $calendar -Config $config -Now (At '2027-01-16T12:37:00Z') -Issues $t -GetIndex $nuget
 Check 'closed issue: a new one opens' (@($t.State.issues | Where-Object { $_.open }).Count -eq 1) (Summary $t)
 
+# 12. Inactivity: a newest commit 44 days old opens nothing; at 45 days one issue opens, mentioning the
+# team and naming day 60, and the next run adds nothing.
+$t = New-Tracker
+$a = Invoke-WatchCheck -Calendar $calendar -Config $config -Now (At '2027-02-28T12:37:00Z') -Issues $t -GetIndex $complete -LastCommit (At '2027-01-15T23:59:00Z')
+Check 'newest commit 44 days old: no issue' ($t.State.issues.Count -eq 0) (Summary $t)
+$a = Invoke-WatchCheck -Calendar $calendar -Config $config -Now (At '2027-03-01T12:37:00Z') -Issues $t -GetIndex $complete -LastCommit (At '2027-01-15T23:59:00Z') -Mention '@BHoM/release-team'
+$a = Invoke-WatchCheck -Calendar $calendar -Config $config -Now (At '2027-03-02T12:37:00Z') -Issues $t -GetIndex $complete -LastCommit (At '2027-01-15T23:59:00Z') -Mention '@BHoM/release-team'
+Check 'newest commit 45 days old: one issue, once' ($t.State.issues.Count -eq 1 -and $t.State.issues[0].title -ceq 'Scheduled runs stop on 2027-03-16' -and $t.State.issues[0].body -like '@BHoM/release-team The newest commit on main is 45 days old.*' -and $t.State.comments.Count -eq 0) (Summary $t)
+
 # 11. The entry point, run the way watch.yml runs it: a fresh process in the repository root that imports
 # only Watch.psm1 and takes the mention and run URL from the environment. The calendar is planted with one
 # event dated today, and nuget.org and the issue tracker are stubs, so nothing touches the network.
@@ -150,7 +159,7 @@ $opened | ForEach-Object { Write-Host "OPENED $_" }
     Push-Location -LiteralPath $root
     try { $out = (& $shell -NoProfile -NonInteractive -File $stepFile 2>&1 | Out-String); $code = $LASTEXITCODE }
     finally { Pop-Location }
-    $ok = $code -eq 0 -and $out -like "*opened 'NuGet 10.1.0-alpha.1.0 incomplete on nuget.org'*" -and $out -like "*opened 'Calendar runs out on $today'*" -and
+    $ok = $code -eq 0 -and $out -like "*opened 'NuGet 10.1.0-alpha.1.0 incomplete on nuget.org'*" -and $out -like "*opened 'Calendar runs out on $today'*" -and $out -notlike '*Scheduled runs stop*' -and
         $out -like '*OPENED NuGet 10.1.0-alpha.1.0 incomplete on nuget.org | @BHoM/release-team 16 of 16 packages*Checked by the-run-url.*'
     Check 'Invoke-Watch as watch.yml calls it: reads the calendar, config and environment, opens both issues' $ok "exit $code$(if (-not $ok) { "`n$out" })"
 }
@@ -159,5 +168,5 @@ finally {
     Remove-Item -LiteralPath $tmp -Recurse -Force
 }
 
-Write-Host "PowerShell $($PSVersionTable.PSVersion): 11 cases, $failures failed."
+Write-Host "PowerShell $($PSVersionTable.PSVersion): 13 cases, $failures failed."
 if ($failures -gt 0) { exit 1 }

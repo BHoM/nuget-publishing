@@ -37,6 +37,7 @@ jobs:
           curl -sSfL -o "$archive" "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
           echo "$ACTIONLINT_SHA256  $archive" | sha256sum --check --strict -
           tar -xzf "$archive" -C "$RUNNER_TEMP" actionlint
+          if command -v shellcheck > /dev/null; then shellcheck --version; else echo "shellcheck is not installed, so actionlint does not check run: scripts."; fi
           "$RUNNER_TEMP/actionlint" -color
 
   policy:
