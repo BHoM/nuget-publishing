@@ -11,9 +11,16 @@ $root = Split-Path $PSScriptRoot -Parent
 $script = Join-Path $root 'scripts/Test-Calendar.ps1'
 $shell = (Get-Process -Id $PID).Path
 
+# On a runner the script prints each finding as an annotation. The child runs with GITHUB_ACTIONS unset,
+# so this test reads the plain ERROR: form and its planted samples post no annotations on the run.
 function Invoke-Calendar([string]$Path) {
-    $out = & $shell -NoProfile -NonInteractive -File $script -Path $Path 2>&1 | Out-String
-    return [pscustomobject]@{ Exit = $LASTEXITCODE; Output = $out }
+    $savedActions = $env:GITHUB_ACTIONS
+    $env:GITHUB_ACTIONS = $null
+    try {
+        $out = & $shell -NoProfile -NonInteractive -File $script -Path $Path 2>&1 | Out-String
+        return [pscustomobject]@{ Exit = $LASTEXITCODE; Output = $out }
+    }
+    finally { $env:GITHUB_ACTIONS = $savedActions }
 }
 
 $failures = 0
