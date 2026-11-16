@@ -151,6 +151,28 @@ class PolicyTests(unittest.TestCase):
                   "      - run: git clone --depth 1 \"https://github.com/$GITHUB_REPOSITORY\" src\n" + self.PUBLISH_FIRST_STEP)
         self.assert_only("publish")
 
+    def test_publish_write_all(self):
+        self.edit(".github/workflows/publish-nuget.yml", self.PUBLISH_PERMS, "    permissions: write-all\n    timeout-minutes: 30\n")
+        self.assert_only("publish")
+
+    def test_publish_container(self):
+        self.edit(".github/workflows/publish-nuget.yml", self.PUBLISH_PERMS, self.PUBLISH_PERMS + "    container: ubuntu:24.04\n")
+        self.assert_only("publish")
+
+    def test_publish_job_env(self):
+        self.edit(".github/workflows/publish-nuget.yml", self.PUBLISH_PERMS,
+                  self.PUBLISH_PERMS + "    env:\n      BASH_ENV: /home/runner/work/_temp/release/env.sh\n")
+        self.assert_only("publish")
+
+    def test_publish_default_shell_not_bash(self):
+        self.edit(".github/workflows/publish-nuget.yml", "    defaults:\n      run:\n        shell: bash\n    # No checkout",
+                  "    defaults:\n      run:\n        shell: bash --rcfile /home/runner/work/_temp/release/rc {0}\n    # No checkout")
+        self.assert_only("publish")
+
+    def test_publish_continue_on_error(self):
+        self.edit(".github/workflows/publish-nuget.yml", self.PUBLISH_FIRST_STEP, self.PUBLISH_FIRST_STEP + "        continue-on-error: true\n")
+        self.assert_only("publish")
+
     def test_uses_tag_not_sha(self):
         self.edit(".github/workflows/watch.yml", "actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd", "actions/checkout@v6")
         self.assert_only("uses")

@@ -10,9 +10,12 @@ Prints one line per breach, tagged with its rule, and exits 1 if there is any. R
   environment   an environment only on that job, and it is the one expression that chooses nuget-org-auto
                 for a run of alphas only and nuget-org, which requires approval, for anything else; job plan
                 passes approval and planned_on straight from its one step with id plan
-  publish       job publish holds no permission beyond contents: read and id-token: write, uses only
-                download-artifact and NuGet/login, so no checkout, and no run: step mentions git, gh, a
-                script file, the workspace or a github.com address
+  publish       job publish has only the keys in PUBLISH_KEYS, so no container, services or job-level env;
+                a default shell, if set, is exactly bash; it holds no permission beyond contents: read and
+                id-token: write; it uses only download-artifact and NuGet/login, so no checkout; no step
+                sets continue-on-error; and no run: step mentions git, gh, a script file, the workspace or a
+                github.com address. These checks look for the known ways in; they do not prove the job
+                runs no repository code, and code-owner review covers the rest
   uses          every uses: is owner/repo@<40 hex>; no local or Docker actions
   downloads     every download-artifact has name: and a path: under ${{ runner.temp }} with no ..
   secrets       no secrets reference except secrets.GITHUB_TOKEN
@@ -52,6 +55,7 @@ PUBLISH_ENVIRONMENT = "${{ needs.plan.outputs.approval == 'false' && 'nuget-org-
 PLAN_OUTPUTS = {name: f"${{{{ steps.plan.outputs.{name} }}}}" for name in ("approval", "planned_on")}
 PUBLISH_PERMISSIONS = {"contents": "read", "id-token": "write"}
 PUBLISH_ACTIONS = {"actions/download-artifact", "nuget/login"}
+PUBLISH_KEYS = {"needs", "if", "runs-on", "environment", "permissions", "timeout-minutes", "outputs", "defaults", "steps"}
 REPOSITORY_CODE = re.compile(r"\b(git|gh)\b|scripts/|\.(ps1|psm1|py)\b|GITHUB_WORKSPACE|github\.com/", re.IGNORECASE)
 PINNED_USES = re.compile(r"\A[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+@[0-9a-f]{40}\Z")
 EXPRESSION = re.compile(r"\$\{\{(.*?)\}\}", re.DOTALL)
@@ -164,6 +168,14 @@ def check_workflow(name, doc, errors):
                 err("environment", f"job plan has {ids.count('plan')} steps with id plan, must have exactly one")
 
         if allowed:
+            extra = sorted(set(job) - PUBLISH_KEYS)
+            if extra:
+                err("publish", f"job publish has keys {extra}; it may have only {sorted(PUBLISH_KEYS)}")
+            defaults = job.get("defaults") or {}
+            run_defaults = (defaults.get("run") or {}) if isinstance(defaults, dict) else None
+            shell = run_defaults.get("shell", "bash") if isinstance(run_defaults, dict) else None
+            if shell != "bash":
+                err("publish", f"job publish has defaults {defaults!r}; a default shell, if set, must be exactly 'bash'")
             perms = job.get("permissions")
             granted = {str(k): str(v).lower() for k, v in perms.items()} if isinstance(perms, dict) else None
             if granted is None or any(PUBLISH_PERMISSIONS.get(k) != v for k, v in granted.items()):
@@ -186,11 +198,13 @@ def check_workflow(name, doc, errors):
                     err("downloads", f"{label} downloads to '{dl_path}', not a path under ${{{{ runner.temp }}}} without ..")
             if allowed and uses is not None and str(uses).split("@")[0].lower() not in PUBLISH_ACTIONS:
                 err("publish", f"{label} uses '{uses}'; job publish may use only {sorted(PUBLISH_ACTIONS)}")
+            if allowed and "continue-on-error" in step:
+                err("publish", f"{label} sets continue-on-error; no step of job publish may")
             run = step.get("run")
             if isinstance(run, str) and "${{" in run:
                 err("run", f"{label} has ${{{{ inside run:")
             if allowed and isinstance(run, str) and REPOSITORY_CODE.search(run):
-                err("publish", f"{label} mentions '{REPOSITORY_CODE.search(run).group(0)}'; job publish runs no repository code")
+                err("publish", f"{label} mentions '{REPOSITORY_CODE.search(run).group(0)}'; job publish may not mention it")
 
     if has_key(doc, "secrets"):
         err("secrets", "has a secrets: key")
