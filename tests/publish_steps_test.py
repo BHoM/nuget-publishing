@@ -13,6 +13,7 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+import zipfile
 
 import yaml
 
@@ -159,6 +160,92 @@ class PushStepTests(unittest.TestCase):
                 proc, log = self.run_step(value)
                 self.assertNotEqual(proc.returncode, 0, proc.stdout + proc.stderr)
                 self.assertEqual([line for line in log if line.startswith("DOTNET")], [], "\n".join(log))
+
+
+CHECK_STEP = "Check files against the validated list"
+BETA = "10.1.0-beta.0"
+
+
+@unittest.skipUnless(BASH and shutil.which("jq") and shutil.which("unzip", path=os.path.dirname(BASH) + os.pathsep + os.environ.get("PATH", "")),
+                     "needs bash, jq, sha256sum and unzip")
+class CheckStepTests(unittest.TestCase):
+    """The step must stop on a listed version that plan did not choose, a beta in a run without approval,
+    or a package whose own nuspec carries another version, whatever validate's list says."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="check-step-test-")
+        self.release = os.path.join(self.tmp, "release")
+        self.stubs = os.path.join(self.tmp, "stubs")
+        os.makedirs(self.release)
+        os.makedirs(self.stubs)
+        if os.name == "nt":
+            # jq built for Windows ends its lines with CRLF; the runner's does not.
+            path = os.path.join(self.stubs, "jq")
+            real = shutil.which("jq").replace("\\", "/")
+            with open(path, "w", encoding="utf-8", newline="\n") as f:
+                f.write(f"#!/usr/bin/env bash\nset -o pipefail\n\"{real}\" \"$@\" | tr -d '\\r'\n")
+            os.chmod(path, 0o755)
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp)
+
+    def package(self, version, nuspec_version=None, nuspec_name="BHoM.nuspec", extra=""):
+        rel = f"{version}/packages/BHoM.{version}.nupkg"
+        path = os.path.join(self.release, rel)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        nuspec = (f'<?xml version="1.0" encoding="utf-8"?>\n<package><metadata>{extra}<id>BHoM</id>'
+                  f'<version>{nuspec_version or version}</version></metadata></package>\n')
+        with zipfile.ZipFile(path, "w") as z:
+            z.writestr(nuspec_name, nuspec)
+            z.writestr("lib/net472/BHoM.dll", "not really an assembly")
+        with open(path, "rb") as f:
+            sha = hashlib.sha256(f.read()).hexdigest()
+        return {"version": version, "id": "BHoM", "file": rel, "sha256": sha}
+
+    def run_step(self, listed, events, approval):
+        env = dict(os.environ)
+        env.update({
+            "PATH": self.stubs + os.pathsep + env.get("PATH", ""),
+            "RUNNER_TEMP": self.tmp.replace("\\", "/"),
+            "TO_PUBLISH": json.dumps(listed),
+            "EVENTS": json.dumps([{"version": v} for v in events]),
+            "APPROVAL": approval,
+        })
+        return subprocess.run([BASH, "--noprofile", "--norc", "-c", publish_step(CHECK_STEP)], env=env,
+                              capture_output=True, text=True)
+
+    def assert_passes(self, *args):
+        proc = self.run_step(*args)
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+
+    def assert_stops(self, message, *args):
+        proc = self.run_step(*args)
+        self.assertNotEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertIn(message, proc.stdout)
+
+    def test_planned_alpha_without_approval_passes(self):
+        self.assert_passes([self.package(VERSION)], [VERSION], "false")
+
+    def test_planned_beta_with_approval_passes(self):
+        self.assert_passes([self.package(VERSION), self.package(BETA)], [VERSION, BETA], "true")
+
+    def test_unplanned_version_stops(self):
+        self.assert_stops("not one of this run's events", [self.package("10.1.0-alpha.2.0")], [VERSION], "false")
+
+    def test_beta_in_a_run_without_approval_stops(self):
+        self.assert_stops("not an alpha", [self.package(BETA)], [VERSION, BETA], "false")
+
+    def test_nuspec_version_differs_from_the_list_stops(self):
+        listed = self.package(VERSION, nuspec_version=BETA)
+        self.assert_stops("does not have version", [listed], [VERSION, BETA], "true")
+
+    def test_second_version_element_stops(self):
+        listed = self.package(VERSION, extra=f"<!-- <version>{BETA}</version> -->")
+        self.assert_stops("does not have version", [listed], [VERSION], "false")
+
+    def test_nuspec_not_at_the_root_stops(self):
+        listed = self.package(VERSION, nuspec_name="sub/BHoM.nuspec")
+        self.assert_stops("does not have version", [listed], [VERSION], "false")
 
 
 if __name__ == "__main__":

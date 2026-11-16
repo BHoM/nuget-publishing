@@ -1,8 +1,8 @@
 name: Publish NuGet packages
 
 # Builds the 16 public BHoM packages on the dates in calendar.json and publishes them to nuget.org
-# through Trusted Publishing. Only the publish job can obtain a nuget.org key, and it runs no repository
-# code. A run whose events are all alphas publishes on the nuget-org-auto environment without approval;
+# through Trusted Publishing. Only the publish job can obtain a nuget.org key, and it has no checkout.
+# A run whose events are all alphas publishes on the nuget-org-auto environment without approval;
 # any other run waits for a release-team approval on the nuget-org environment.
 
 on:
@@ -185,19 +185,37 @@ jobs:
           name: release
           path: ${{ runner.temp }}/release
 
+      # Validate parses packages built from other repositories' code, so its list is not taken on trust:
+      # each version is also checked here against plan's events and against the package's own nuspec.
       - name: Check files against the validated list
         env:
           TO_PUBLISH: ${{ needs.validate.outputs.to_publish }}
+          EVENTS: ${{ needs.plan.outputs.events }}
+          APPROVAL: ${{ needs.plan.outputs.approval }}
         run: |
           set -euo pipefail
           cd "$RUNNER_TEMP/release"
           jq -e 'type == "array" and length > 0' <<<"$TO_PUBLISH" > /dev/null
-          jq -r '.[] | [.file, .sha256] | @tsv' <<<"$TO_PUBLISH" | while IFS=$'\t' read -r file sha; do
+          jq -r '.[] | [.file, .sha256, .version] | @tsv' <<<"$TO_PUBLISH" | while IFS=$'\t' read -r file sha version; do
             case "$file" in
               /* | *..* ) echo "::error::Unsafe path in to_publish: $file"; exit 1 ;;
             esac
             actual=$(sha256sum -- "$file" | cut -d' ' -f1)
             if [ "$actual" != "$sha" ]; then echo "::error::$file has SHA-256 $actual, validate approved $sha"; exit 1; fi
+            if ! jq -e --arg v "$version" 'any(.[]; .version == $v)' <<<"$EVENTS" > /dev/null; then
+              echo "::error::$file is listed at $version, which is not one of this run's events"; exit 1
+            fi
+            if [ "$APPROVAL" = "false" ] && [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+-alpha\. ]]; then
+              echo "::error::$file is listed at $version, which is not an alpha, in a run without approval"; exit 1
+            fi
+            # One nuspec at the root, one version element in it, and that element is <version>$version</version>.
+            nuspec=$(unzip -Z1 "./$file" | grep -iE '^[^/]*\.nuspec$' || true)
+            text=""
+            if [[ "$nuspec" =~ ^[A-Za-z0-9._-]+$ ]]; then text=$(unzip -p "./$file" "$nuspec"); fi
+            tags=$(grep -oiE '<([[:alnum:]_.-]+:)?version([^[:alnum:]_.:-]|$)' <<<"$text" | grep -c . || true)
+            if [ "$tags" -ne 1 ] || ! grep -qF "<version>$version</version>" <<<"$text"; then
+              echo "::error::$file does not have version $version in the single version element of one root nuspec"; exit 1
+            fi
           done
           echo "All $(jq length <<<"$TO_PUBLISH") files match the validated list."
 
