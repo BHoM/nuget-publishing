@@ -1,3 +1,9 @@
 [
-  { "date": "2027-01-15", "version": "10.1.0-alpha.1.0" }
+  { "date": "2027-01-15", "version": "10.1.0-alpha.1.0" },
+  { "date": "2027-01-29", "version": "10.1.0-alpha.2.0" },
+  { "date": "2027-02-12", "version": "10.1.0-alpha.3.0" },
+  { "date": "2027-02-26", "version": "10.1.0-alpha.4.0" },
+  { "date": "2027-03-12", "version": "10.1.0-alpha.5.0" },
+  { "date": "2027-03-26", "version": "10.1.0-alpha.6.0" },
+  { "date": "2027-03-26", "version": "10.1.0-beta.0", "sprint": 6 }
 ]
