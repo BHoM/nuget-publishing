@@ -103,6 +103,54 @@ class PolicyTests(unittest.TestCase):
         self.edit(".github/workflows/publish-nuget.yml", self.PUBLISH_ENVIRONMENT, "")
         self.assert_only("environment")
 
+    # What feeds the environment expression.
+
+    def test_plan_approval_constant_false(self):
+        self.edit(".github/workflows/publish-nuget.yml", "      approval: ${{ steps.plan.outputs.approval }}\n", "      approval: 'false'\n")
+        self.assert_only("environment")
+
+    def test_plan_approval_from_another_output(self):
+        self.edit(".github/workflows/publish-nuget.yml", "      approval: ${{ steps.plan.outputs.approval }}\n", "      approval: ${{ steps.plan.outputs.rehearsal }}\n")
+        self.assert_only("environment")
+
+    def test_plan_planned_on_constant(self):
+        self.edit(".github/workflows/publish-nuget.yml", "      planned_on: ${{ steps.plan.outputs.planned_on }}\n", "      planned_on: '2027-01-15'\n")
+        self.assert_only("environment")
+
+    def test_plan_step_id_changed(self):
+        self.edit(".github/workflows/publish-nuget.yml", "        id: plan\n", "        id: choose\n")
+        self.assert_only("environment")
+
+    # The publish job.
+
+    PUBLISH_PERMS = "    permissions:\n      contents: read\n      id-token: write\n    timeout-minutes: 30\n"
+    PUBLISH_FIRST_STEP = "      - name: Refuse a re-run from an earlier day\n"
+
+    def test_publish_extra_permission(self):
+        self.edit(".github/workflows/publish-nuget.yml", self.PUBLISH_PERMS,
+                  "    permissions:\n      contents: write\n      id-token: write\n    timeout-minutes: 30\n")
+        self.assert_only("publish")
+
+    def test_publish_permission_added(self):
+        self.edit(".github/workflows/publish-nuget.yml", self.PUBLISH_PERMS,
+                  "    permissions:\n      contents: read\n      id-token: write\n      packages: write\n    timeout-minutes: 30\n")
+        self.assert_only("publish")
+
+    def test_publish_checkout(self):
+        self.edit(".github/workflows/publish-nuget.yml", self.PUBLISH_FIRST_STEP,
+                  "      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2\n" + self.PUBLISH_FIRST_STEP)
+        self.assert_only("publish")
+
+    def test_publish_runs_a_script(self):
+        self.edit(".github/workflows/publish-nuget.yml", self.PUBLISH_FIRST_STEP,
+                  "      - run: pwsh ./scripts/Plan.psm1\n" + self.PUBLISH_FIRST_STEP)
+        self.assert_only("publish")
+
+    def test_publish_fetches_the_repository(self):
+        self.edit(".github/workflows/publish-nuget.yml", self.PUBLISH_FIRST_STEP,
+                  "      - run: git clone --depth 1 \"https://github.com/$GITHUB_REPOSITORY\" src\n" + self.PUBLISH_FIRST_STEP)
+        self.assert_only("publish")
+
     def test_uses_tag_not_sha(self):
         self.edit(".github/workflows/watch.yml", "actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd", "actions/checkout@v6")
         self.assert_only("uses")
