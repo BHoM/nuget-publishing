@@ -1,22 +1,24 @@
 # nuget-publishing
 
-This repository publishes the 16 public BHoM NuGet packages to nuget.org on the dates listed in `calendar.json`. A scheduled GitHub Actions workflow builds every package from its repository's `develop` branch and pushes the set. An alpha is pushed without approval; a beta is pushed once a member of the release team has approved the run. It stores no nuget.org key: the publish job obtains a short-lived one through nuget.org Trusted Publishing.
+This repository publishes the public BHoM NuGet packages listed in `config/repos.json` to nuget.org on the dates listed in `calendar.json`. A scheduled GitHub Actions workflow builds every package from its repository's `develop` branch and pushes the set. An alpha is pushed without approval; a beta is pushed once a member of the release team has approved the run. It stores no nuget.org key: the publish job obtains a short-lived one through nuget.org Trusted Publishing.
 
 ## What happens on a release day
 
 1. At 05:17 UTC every day, `publish-nuget.yml` starts, and `plan` selects the events dated today (UTC) that are not marked `skip`. With none, the run ends there.
-2. `build` builds and packs the 16 from the commit each `develop` branch pointed at just before 05:00 UTC.
-3. `validate` checks the 16 packages and leaves out any that nuget.org already holds.
+2. `build` builds and packs every package from the commit each `develop` branch pointed at just before 05:00 UTC.
+3. `validate` checks the packages and leaves out any that nuget.org already holds.
 4. `publish` pushes the packages to nuget.org. A run whose events are all alphas pushes at once, on the `nuget-org-auto` environment. A run with a beta in it waits for approval on the `nuget-org` environment first, and one approval covers an alpha due the same day.
-5. `verify` waits up to 30 minutes for nuget.org to list all 16.
+5. `verify` waits up to 30 minutes for nuget.org to list every package.
 6. A failed or cancelled job opens an issue titled `publish-nuget.yml failed: <jobs>`.
-7. At 12:37 UTC, `watch.yml` checks every event of the last 14 days and opens `NuGet <version> incomplete on nuget.org`, listing the missing packages, for any that is not complete.
+7. At 12:37 UTC, `watch.yml` checks every event of the last 14 days and opens `NuGet <version> incomplete on nuget.org`, listing the missing packages, for any that is not complete. It also opens `Scheduled runs stop on <date>` when the newest commit on `main` is 45 or more days old.
 
-A run that waits for approval cannot be approved by the person who started it, so a beta started by hand needs two people. Approval can be given on a later day, within the 7 days the built packages are kept. To approve a run:
+Approve a run on the day it started (UTC). A run uses `calendar.json` as it was on the day it started, so a run still waiting on a later day is cancelled and started again by hand, not approved. On `nuget-org`, the environment a beta waits on, the person who started a run cannot approve it, so a beta started by hand needs two people. To approve a run:
 
-1. Open the repository's Actions tab and select the waiting `Publish NuGet packages` run. Its summary lists the planned events, the pinned commits and the packages to be pushed.
-2. Check that the run started today, and that its version is in `calendar.json` on `main` and is not marked `skip`.
-3. Click "Review deployments", tick the environment, then click "Approve and deploy".
+1. Open the repository's Actions tab and select the waiting `Publish NuGet packages` run.
+2. Check that it started today, UTC, from `main`.
+3. Check that each version in its summary is in `calendar.json` on `main`, dated today or, for a run started by hand, earlier, and not marked `skip`.
+4. Check that the summary lists the packages you expect to be pushed, at that version.
+5. If all of these hold, click "Review deployments", tick the environment, then click "Approve and deploy". If any does not, click "Reject".
 
 An administrator can make alphas wait for approval too, by adding required reviewers to the `nuget-org-auto` environment in the repository settings, and removing them to make alphas automatic again.
 
@@ -60,6 +62,7 @@ gh workflow run publish-nuget.yml --ref main -f version=10.1.0-alpha.1.0 -f rehe
 - The version must be in the calendar and not marked `skip`. Its date does not matter: if it is in the future, the build uses the commits at the moment the run started.
 - The last step of `publish` checks that the folder holds exactly the validated packages.
 - `verify` checks that nuget.org lists none of the packages at that version, so a rehearsal of a version that is already published fails there.
+- To compare a rehearsal's packages with the same version on nuget.org, download the run's `release` artifact and run `pwsh ./scripts/Compare-WithNuGetOrg.ps1 -PackagesFolder <artifact>/<version>/packages -Version <version>`. It reports differences in file lists, dependencies and nuspec metadata, not in file bytes. No workflow runs it.
 
 ## When something goes wrong
 
@@ -67,13 +70,14 @@ A run cannot be re-run on a later day, because it would use the calendar as it w
 
 | Symptom | What to do |
 |---|---|
-| Nobody approved, or the run is stuck waiting | Cancel the run, then publish by hand. |
+| Nobody approved on the day, or the run is stuck waiting | Cancel the run, then publish by hand. |
 | `build` failed at "Pin commits" | A repository's commit at 05:00 UTC could not be established with confidence. The step summary names the repository and the reason. Publish by hand once the cause has cleared. |
 | `build` failed later | The `build-logs` artifact of the run holds each repository's log. A run by hand still builds the 05:00 UTC commits, so a fix merged later is not picked up. |
 | `validate` reports a package "already on nuget.org with different content" | That version cannot be replaced. Add a new event with a new version. |
 | `publish` failed part way | On the same day, use "Re-run failed jobs" on that run, or publish by hand. On a later day, publish by hand. |
 | `plan` or `publish` says the run cannot be re-run | Publish by hand. |
 | `verify` timed out | nuget.org had not listed every package within 30 minutes. The 12:37 UTC watch checks again. |
+| An issue `Scheduled runs stop on <date>` is open | `main` has had no commit for 45 days. Merge any small reviewed change to `main` before the date, then close the issue. |
 | No run starts at 05:17 UTC and the 12:37 UTC watch is silent too | GitHub disables scheduled workflows in a public repository after 60 days without repository activity, and a disabled workflow opens no issue. `gh workflow list --all` shows the state `disabled_inactivity`, and the workflow's page in the Actions tab shows an "Enable workflow" button. Click it, or run `gh workflow enable publish-nuget.yml` and `gh workflow enable watch.yml`, then publish by hand any event that was missed. |
 | The workflow must stop publishing | Set `skip: true` on the affected events by pull request. |
 | Issues mention nobody, or "Log in to nuget.org" failed | Check the repository variables `RELEASE_TEAM_MENTION` (the release team's mention) and `NUGET_USER` (the nuget.org profile name the Trusted Publishing policy was created under). |
