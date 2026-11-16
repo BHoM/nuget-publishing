@@ -129,6 +129,13 @@ $a = Invoke-WatchCheck -Calendar $calendar -Config $config -Now (At '2027-03-01T
 $a = Invoke-WatchCheck -Calendar $calendar -Config $config -Now (At '2027-03-02T12:37:00Z') -Issues $t -GetIndex $complete -LastCommit (At '2027-01-15T23:59:00Z') -Mention '@BHoM/release-team'
 Check 'newest commit 45 days old: one issue, once' ($t.State.issues.Count -eq 1 -and $t.State.issues[0].title -ceq 'Scheduled runs stop on 2027-03-16' -and $t.State.issues[0].body -like '@BHoM/release-team The newest commit on main is 45 days old.*' -and $t.State.comments.Count -eq 0) (Summary $t)
 
+# 13. A nuget.org error on a day with a recent event still leaves the inactivity issue opened.
+$t = New-Tracker
+$threw = $false
+try { Invoke-WatchCheck -Calendar @(Ev '2027-02-26' '10.1.0-alpha.4.0') -Config $config -Now (At '2027-03-01T12:37:00Z') -Issues $t -GetIndex { throw 'nuget.org unavailable' } -LastCommit (At '2027-01-15T23:59:00Z') | Out-Null }
+catch { $threw = $true }
+Check 'nuget.org error: inactivity issue still opens' ($threw -and $t.State.issues.Count -eq 1 -and $t.State.issues[0].title -ceq 'Scheduled runs stop on 2027-03-16') (Summary $t)
+
 # 11. The entry point, run the way watch.yml runs it: a fresh process in the repository root that imports
 # only Watch.psm1 and takes the mention and run URL from the environment. The calendar is planted with one
 # event dated today, and nuget.org and the issue tracker are stubs, so nothing touches the network.
@@ -168,5 +175,5 @@ finally {
     Remove-Item -LiteralPath $tmp -Recurse -Force
 }
 
-Write-Host "PowerShell $($PSVersionTable.PSVersion): 13 cases, $failures failed."
+Write-Host "PowerShell $($PSVersionTable.PSVersion): 14 cases, $failures failed."
 if ($failures -gt 0) { exit 1 }

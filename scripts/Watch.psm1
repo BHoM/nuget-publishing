@@ -48,6 +48,21 @@ function Invoke-WatchCheck {
     $lead = if ($Mention) { "$Mention " } else { '' }
     $actions = [System.Collections.Generic.List[string]]::new()
 
+    # First, so that a nuget.org error below cannot stop it.
+    if ($null -ne $LastCommit) {
+        $committed = $LastCommit.UtcDateTime.Date
+        $age = ($today - $committed).TotalDays
+        if ($age -ge 45) {
+            $stopTitle = "Scheduled runs stop on $($committed.AddDays(60).ToString('yyyy-MM-dd', $invariant))"
+            if ($null -eq (& $Issues.FindOpen $stopTitle)) {
+                $body = "${lead}The newest commit on main is $age days old. GitHub disables scheduled workflows in a public repository after 60 days without activity, and nothing reports it. Merge a small reviewed change to main before then."
+                & $Issues.Open $stopTitle $body | Out-Null
+                $actions.Add("opened '$stopTitle'")
+            }
+            else { $actions.Add("unchanged '$stopTitle'") }
+        }
+    }
+
     foreach ($e in @($Calendar | Where-Object { [string]::CompareOrdinal($_.date, $from) -ge 0 -and [string]::CompareOrdinal($_.date, $to) -le 0 })) {
         $missing = Get-MissingPackageId -Config $Config -Version $e.version -Get $GetIndex
         $state = if ($e.skip) { 'marked skip, so this workflow did not publish it' } else { 'published by this workflow' }
@@ -84,19 +99,6 @@ function Invoke-WatchCheck {
         else { $actions.Add("unchanged '$lookTitle'") }
     }
 
-    if ($null -ne $LastCommit) {
-        $committed = $LastCommit.UtcDateTime.Date
-        $age = ($today - $committed).TotalDays
-        if ($age -ge 45) {
-            $stopTitle = "Scheduled runs stop on $($committed.AddDays(60).ToString('yyyy-MM-dd', $invariant))"
-            if ($null -eq (& $Issues.FindOpen $stopTitle)) {
-                $body = "${lead}The newest commit on main is $age days old. GitHub disables scheduled workflows in a public repository after 60 days without activity, and nothing reports it. Merge a small reviewed change to main before then."
-                & $Issues.Open $stopTitle $body | Out-Null
-                $actions.Add("opened '$stopTitle'")
-            }
-            else { $actions.Add("unchanged '$stopTitle'") }
-        }
-    }
     return , $actions.ToArray()
 }
 
