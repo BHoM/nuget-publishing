@@ -9,6 +9,8 @@ Import-Module (Join-Path $PSScriptRoot 'Release.psm1')
 #    listing the missing IDs, or, if the watcher's issue is already open, comment only when the list
 #    differs from the one it last recorded there.
 # 2. If the last event is fewer than 42 days away, or past, open "Calendar runs out on <date>" once.
+# 3. If the newest commit on main is 45 or more days old, open "Scheduled runs stop on <date>" once.
+#    GitHub disables scheduled workflows in a public repository after 60 days without activity.
 #
 # Only issues opened by the workflow's own account count, so an issue anyone else opens with the same
 # title cannot silence the watcher. The missing list is recorded in an HTML comment the watcher reads back.
@@ -36,7 +38,8 @@ function Invoke-WatchCheck {
         [Parameter(Mandatory)]$Issues,
         [scriptblock]$GetIndex = { param($Url) Invoke-FlatContainerGet -Url $Url },
         [string]$Mention,
-        [string]$RunUrl
+        [string]$RunUrl,
+        [Nullable[DateTimeOffset]]$LastCommit
     )
     $invariant = [Globalization.CultureInfo]::InvariantCulture
     $today = $Now.UtcDateTime.Date
@@ -80,13 +83,28 @@ function Invoke-WatchCheck {
         }
         else { $actions.Add("unchanged '$lookTitle'") }
     }
+
+    if ($null -ne $LastCommit) {
+        $committed = $LastCommit.UtcDateTime.Date
+        $age = ($today - $committed).TotalDays
+        if ($age -ge 45) {
+            $stopTitle = "Scheduled runs stop on $($committed.AddDays(60).ToString('yyyy-MM-dd', $invariant))"
+            if ($null -eq (& $Issues.FindOpen $stopTitle)) {
+                $body = "${lead}The newest commit on main is $age days old. GitHub disables scheduled workflows in a public repository after 60 days without activity, and nothing reports it. Merge a small reviewed change to main before then."
+                & $Issues.Open $stopTitle $body | Out-Null
+                $actions.Add("opened '$stopTitle'")
+            }
+            else { $actions.Add("unchanged '$stopTitle'") }
+        }
+    }
     return , $actions.ToArray()
 }
 
 function Invoke-Watch {
     <#
     .SYNOPSIS
-    Runs the watch job. Reads the repository, token, release-team mention and run URL from the environment.
+    Runs the watch job. Reads the repository, token, release-team mention and run URL from the environment,
+    and the date of the newest commit from the checkout.
 
     .DESCRIPTION
     -Issues and -GetIndex exist so tests can run without the network.
@@ -101,8 +119,10 @@ function Invoke-Watch {
     $config = Get-Content -LiteralPath $ConfigPath -Raw | ConvertFrom-Json
     $calendar = Read-ReleaseCalendar -Path $CalendarPath
     if (-not $Issues) { $Issues = New-GitHubIssueClient -Repository $env:GITHUB_REPOSITORY -Token $env:GITHUB_TOKEN }
+    $committed = git log -1 --format=%cI
+    if ($LASTEXITCODE -ne 0) { throw "git log failed with exit $LASTEXITCODE, so the age of the newest commit is unknown." }
     if (-not $env:MENTION) { Write-Host '::warning title=No release-team mention::The RELEASE_TEAM_MENTION variable is not set, so issues mention nobody.' }
-    $actions = Invoke-WatchCheck -Calendar $calendar -Config $config -Now ([DateTimeOffset]::UtcNow) -Issues $Issues -GetIndex $GetIndex -Mention $env:MENTION -RunUrl $env:RUN_URL
+    $actions = Invoke-WatchCheck -Calendar $calendar -Config $config -Now ([DateTimeOffset]::UtcNow) -Issues $Issues -GetIndex $GetIndex -Mention $env:MENTION -RunUrl $env:RUN_URL -LastCommit ([DateTimeOffset]::Parse($committed, [Globalization.CultureInfo]::InvariantCulture))
     $actions | ForEach-Object { Write-Host $_ }
 }
 
