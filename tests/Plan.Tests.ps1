@@ -28,6 +28,9 @@ $cases = @(
     @{ Name = 'schedule, one event today'; Args = @{ EventName = 'schedule'; Now = (At '2027-01-15T05:17:00Z') }; Expect = @('10.1.0-alpha.1.0@2027-01-15T05:00:00Z') },
     @{ Name = 'schedule, same-day beta and alpha come out alpha first'; Args = @{ EventName = 'schedule'; Now = (At '2027-03-26T05:17:00Z') }; Expect = @('10.1.0-alpha.6.0@2027-03-26T05:00:00Z', '10.1.0-beta.0@2027-03-26T05:00:00Z') },
     @{ Name = 'schedule, the only event today is skipped'; Args = @{ EventName = 'schedule'; Now = (At '2027-01-29T05:17:00Z') }; Expect = @() },
+    @{ Name = 'schedule, before the cutoff on the event day selects nothing'; Args = @{ EventName = 'schedule'; Now = (At '2027-01-15T04:59:59Z') }; Expect = @() },
+    @{ Name = 'schedule, late run created after midnight on the event day selects nothing'; Args = @{ EventName = 'schedule'; Now = (At '2027-01-15T00:30:00Z') }; Expect = @() },
+    @{ Name = 'schedule, at the cutoff selects the event'; Args = @{ EventName = 'schedule'; Now = (At '2027-01-15T05:00:00Z') }; Expect = @('10.1.0-alpha.1.0@2027-01-15T05:00:00Z') },
     @{ Name = 'schedule, late run still on the event day (UTC)'; Args = @{ EventName = 'schedule'; Now = (At '2027-01-15T23:59:59Z') }; Expect = @('10.1.0-alpha.1.0@2027-01-15T05:00:00Z') },
     @{ Name = 'dispatch, unknown version'; Args = @{ EventName = 'workflow_dispatch'; Version = '10.1.0-alpha.9.0'; Now = (At '2027-02-01T10:00:00Z'); IsComplete = $never }; Refuse = 'is not in calendar.json' },
     @{ Name = 'dispatch, version differing only in case is unknown'; Args = @{ EventName = 'workflow_dispatch'; Version = '10.1.0-ALPHA.1.0'; Now = (At '2027-02-01T10:00:00Z'); IsComplete = $never }; Refuse = 'is not in calendar.json' },
@@ -80,13 +83,14 @@ $tmp = Join-Path ([IO.Path]::GetTempPath()) "plan-test-$PID"
 New-Item -ItemType Directory -Force -Path $tmp | Out-Null
 $saved = @{ GITHUB_EVENT_NAME = $env:GITHUB_EVENT_NAME; GITHUB_OUTPUT = $env:GITHUB_OUTPUT; GITHUB_STEP_SUMMARY = $env:GITHUB_STEP_SUMMARY; INPUT_VERSION = $env:INPUT_VERSION; INPUT_REHEARSAL = $env:INPUT_REHEARSAL; GITHUB_RUN_ATTEMPT = $env:GITHUB_RUN_ATTEMPT }
 try {
-    $today = [DateTime]::UtcNow.ToString('yyyy-MM-dd', [Globalization.CultureInfo]::InvariantCulture)
+    $noon = [DateTimeOffset]::new([DateTime]::UtcNow.Date.AddHours(12), [TimeSpan]::Zero)
+    $today = $noon.UtcDateTime.ToString('yyyy-MM-dd', [Globalization.CultureInfo]::InvariantCulture)
     $cal = Join-Path $tmp 'calendar.json'
     Set-Content -LiteralPath $cal -Value "[ { `"date`": `"$today`", `"version`": `"10.1.0-beta.0`", `"sprint`": 6 }, { `"date`": `"$today`", `"version`": `"10.1.0-alpha.6.0`" } ]"
     $env:GITHUB_EVENT_NAME = 'schedule'; $env:INPUT_VERSION = $null; $env:INPUT_REHEARSAL = $null; $env:GITHUB_STEP_SUMMARY = $null
     $env:GITHUB_RUN_ATTEMPT = '1'
     $env:GITHUB_OUTPUT = Join-Path $tmp 'output.txt'
-    Invoke-Plan -CalendarPath $cal -ConfigPath (Join-Path $root 'config/repos.json') | Out-Null
+    Invoke-Plan -CalendarPath $cal -ConfigPath (Join-Path $root 'config/repos.json') -Now $noon | Out-Null
     $out = @(Get-Content -LiteralPath $env:GITHUB_OUTPUT)
     $eventsLine = @($out | Where-Object { $_ -like 'events=*' })
     $parsed = $eventsLine[0].Substring(7) | ConvertFrom-Json; $parsed = @($parsed)
@@ -97,21 +101,21 @@ try {
 
     Set-Content -LiteralPath $cal -Value '[ { "date": "2001-01-01", "version": "10.1.0-alpha.1.0" } ]'
     Remove-Item -LiteralPath $env:GITHUB_OUTPUT
-    Invoke-Plan -CalendarPath $cal -ConfigPath (Join-Path $root 'config/repos.json') | Out-Null
+    Invoke-Plan -CalendarPath $cal -ConfigPath (Join-Path $root 'config/repos.json') -Now $noon | Out-Null
     $out = @(Get-Content -LiteralPath $env:GITHUB_OUTPUT)
     if (($out -contains 'events=[]') -and ($out -contains 'approval=true')) { Write-Host 'PASS  Invoke-Plan with no event today writes events=[] and approval=true' }
     else { $failures++; Write-Host "FAIL  Invoke-Plan no-event outputs: $($out -join ' | ')" }
 
     Set-Content -LiteralPath $cal -Value "[ { `"date`": `"$today`", `"version`": `"10.1.0-alpha.1.0`" } ]"
     Remove-Item -LiteralPath $env:GITHUB_OUTPUT
-    Invoke-Plan -CalendarPath $cal -ConfigPath (Join-Path $root 'config/repos.json') | Out-Null
+    Invoke-Plan -CalendarPath $cal -ConfigPath (Join-Path $root 'config/repos.json') -Now $noon | Out-Null
     $out = @(Get-Content -LiteralPath $env:GITHUB_OUTPUT)
     if ($out -contains 'approval=false') { Write-Host 'PASS  Invoke-Plan with an alpha only writes approval=false' }
     else { $failures++; Write-Host "FAIL  Invoke-Plan alpha-only outputs: $($out -join ' | ')" }
 
     $env:GITHUB_RUN_ATTEMPT = '2'
     Remove-Item -LiteralPath $env:GITHUB_OUTPUT
-    try { Invoke-Plan -CalendarPath $cal -ConfigPath (Join-Path $root 'config/repos.json') | Out-Null; $failures++; Write-Host 'FAIL  plan ran on a second attempt' }
+    try { Invoke-Plan -CalendarPath $cal -ConfigPath (Join-Path $root 'config/repos.json') -Now $noon | Out-Null; $failures++; Write-Host 'FAIL  plan ran on a second attempt' }
     catch {
         if ($_.Exception.Message -like '*plan runs once only*' -and -not (Test-Path -LiteralPath $env:GITHUB_OUTPUT)) { Write-Host "PASS  second attempt of a run -> refused: $($_.Exception.Message)" }
         else { $failures++; Write-Host "FAIL  second attempt: threw $($_.Exception.Message)" }
@@ -119,7 +123,7 @@ try {
     $env:GITHUB_RUN_ATTEMPT = '1'
 
     $env:GITHUB_EVENT_NAME = 'workflow_dispatch'; $env:INPUT_VERSION = '10.1.0-alpha.1.0'; $env:INPUT_REHEARSAL = 'yes'
-    try { Invoke-Plan -CalendarPath $cal -ConfigPath (Join-Path $root 'config/repos.json') | Out-Null; $failures++; Write-Host 'FAIL  rehearsal input other than true or false was accepted' }
+    try { Invoke-Plan -CalendarPath $cal -ConfigPath (Join-Path $root 'config/repos.json') -Now $noon | Out-Null; $failures++; Write-Host 'FAIL  rehearsal input other than true or false was accepted' }
     catch { Write-Host "PASS  rehearsal input other than true or false -> refused: $($_.Exception.Message)" }
 }
 finally {

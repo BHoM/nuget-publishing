@@ -4,13 +4,13 @@ This repository publishes the public BHoM NuGet packages listed in `config/repos
 
 ## What happens on a release day
 
-1. At 05:17 UTC every day, `publish-nuget.yml` starts, and `plan` selects the events dated today (UTC) that are not marked `skip`. With none, the run ends there.
-2. `build` builds and packs every package from the commit each `develop` branch pointed at just before 05:00 UTC.
+1. Every day, `publish-nuget.yml` starts on a schedule set for 05:17 UTC, and `plan` selects the events dated today (UTC) that are not marked `skip`. With none, the run ends there.
+2. `build` builds and packs every package from the commit each `develop` branch pointed at just before 05:00 UTC. Scheduled runs can start hours late, and the build is pinned to 05:00 UTC on the event's date regardless.
 3. `validate` checks the packages and leaves out any that nuget.org already holds.
 4. `publish` pushes the packages to nuget.org. A run whose events are all alphas pushes at once, on the `nuget-org-auto` environment. A run with a beta in it waits for approval on the `nuget-org` environment first, and one approval covers an alpha due the same day.
 5. `verify` waits up to 30 minutes for nuget.org to list every package.
 6. A failed or cancelled job opens an issue titled `publish-nuget.yml failed: <jobs>`.
-7. At 12:37 UTC, `watch.yml` checks every event of the last 14 days and opens `NuGet <version> incomplete on nuget.org`, listing the missing packages, for any that is not complete. It also opens `Scheduled runs stop on <date>` when the newest commit on `main` is 45 or more days old.
+7. Once a day, `watch.yml` checks every event of the 14 days before today (UTC) and opens `NuGet <version> incomplete on nuget.org`, listing the missing packages, for any that is not complete. It also opens `Scheduled runs stop on <date>` when the newest commit on `main` is 45 or more days old.
 
 Approve a run on the day it started (UTC). A run uses `calendar.json` as it was on the day it started, so a run still waiting on a later day is cancelled and started again by hand, not approved. On `nuget-org`, the environment a beta waits on, the person who started a run cannot approve it, so a beta started by hand needs two people. To approve a run:
 
@@ -76,9 +76,9 @@ A run cannot be re-run on a later day, because it would use the calendar as it w
 | `validate` reports a package "already on nuget.org with different content" | That version cannot be replaced. Add a new event with a new version. |
 | `publish` failed part way | On the same day, use "Re-run failed jobs" on that run, or publish by hand. On a later day, publish by hand. |
 | `plan` or `publish` says the run cannot be re-run | Publish by hand. |
-| `verify` timed out | nuget.org had not listed every package within 30 minutes. The 12:37 UTC watch checks again. |
+| `verify` timed out | nuget.org had not listed every package within 30 minutes. The next day's watch checks again. |
 | An issue `Scheduled runs stop on <date>` is open | `main` has had no commit for 45 days. Merge any small reviewed change to `main` before the date, then close the issue. |
-| No run starts at 05:17 UTC and the 12:37 UTC watch is silent too | GitHub disables scheduled workflows in a public repository after 60 days without repository activity, and a disabled workflow opens no issue. `gh workflow list --all` shows the state `disabled_inactivity`, and the workflow's page in the Actions tab shows an "Enable workflow" button. Click it, or run `gh workflow enable publish-nuget.yml` and `gh workflow enable watch.yml`, then publish by hand any event that was missed. |
+| No scheduled run starts all day and the watch is silent too | GitHub disables scheduled workflows in a public repository after 60 days without repository activity, and a disabled workflow opens no issue. `gh workflow list --all` shows the state `disabled_inactivity`, and the workflow's page in the Actions tab shows an "Enable workflow" button. Click it, or run `gh workflow enable publish-nuget.yml` and `gh workflow enable watch.yml`, then publish by hand any event that was missed. |
 | The workflow must stop publishing | Set `skip: true` on the affected events by pull request. |
 | Issues mention nobody, or "Log in to nuget.org" failed | Check the repository variables `RELEASE_TEAM_MENTION` (the release team's mention) and `NUGET_USER` (the nuget.org profile name the Trusted Publishing policy was created under). |
 

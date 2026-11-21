@@ -1,6 +1,6 @@
 name: Watch nuget.org
 
-# Once a day, after the approval deadline: is every recent event's version complete on nuget.org, skipped
+# Once a day: is every event's version from the 14 days before today complete on nuget.org, skipped
 # events included, does the calendar run out within six weeks, and is the newest commit on main 45 or more
 # days old? Opens an issue for each; issues are closed by hand.
 

@@ -2,12 +2,13 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 Import-Module (Join-Path $PSScriptRoot 'Release.psm1')
 
-# watch.yml, once a day after the approval deadline.
+# watch.yml, once a day.
 #
-# 1. Every event dated in the last 14 days, today included, skipped or not: are all the packages in
+# 1. Every event dated in the 14 days before today (UTC), skipped or not: are all the packages in
 #    repos.json on nuget.org at its version? If not, open "NuGet <version> incomplete on nuget.org"
 #    listing the missing IDs, or, if the watcher's issue is already open, comment only when the list
-#    differs from the one it last recorded there.
+#    differs from the one it last recorded there. Today's events are left out because a scheduled publish
+#    run can start hours late, so a version still missing is flagged the following day.
 # 2. If the last event is fewer than 42 days away, or past, open "Calendar runs out on <date>" once.
 # 3. If the newest commit on main is 45 or more days old, open "Scheduled runs stop on <date>" once.
 #    GitHub disables scheduled workflows in a public repository after 60 days without activity.
@@ -43,8 +44,8 @@ function Invoke-WatchCheck {
     )
     $invariant = [Globalization.CultureInfo]::InvariantCulture
     $today = $Now.UtcDateTime.Date
-    $from = $today.AddDays(-13).ToString('yyyy-MM-dd', $invariant)
-    $to = $today.ToString('yyyy-MM-dd', $invariant)
+    $from = $today.AddDays(-14).ToString('yyyy-MM-dd', $invariant)
+    $to = $today.AddDays(-1).ToString('yyyy-MM-dd', $invariant)
     $lead = if ($Mention) { "$Mention " } else { '' }
     $actions = [System.Collections.Generic.List[string]]::new()
 
