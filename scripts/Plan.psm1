@@ -4,7 +4,8 @@ Import-Module (Join-Path $PSScriptRoot 'Release.psm1')
 
 # The plan job: chooses the events a run of publish-nuget.yml builds.
 #
-#   schedule           every event dated today (UTC) that is not skipped; none is a normal day
+#   schedule           every event dated today (UTC) that is not skipped and whose cutoff has passed; none
+#                      is a normal day. A late run created after midnight selects nothing for the new day.
 #   workflow_dispatch  the one event with that version: dated today or earlier, not skipped, and not
 #                      already complete on nuget.org. A rehearsal waives the date and completeness rules
 #                      but not skip, and pins at the earlier of the event's cutoff and the run's start.
@@ -44,7 +45,7 @@ function Select-ReleaseEvent {
     function Get-Cutoff($e) { [DateTimeOffset]::ParseExact("$($e.date)T05:00:00Z", "yyyy-MM-dd'T'HH:mm:ss'Z'", $invariant, [Globalization.DateTimeStyles]::AssumeUniversal) }
 
     if ($EventName -eq 'schedule') {
-        $due = @($Calendar | Where-Object { $_.date -ceq $today -and -not $_.skip })
+        $due = @($Calendar | Where-Object { $_.date -ceq $today -and -not $_.skip -and (Get-Cutoff $_) -le $nowSeconds })
         $ordered = @($due | Where-Object { (Get-ReleaseKind $_.version) -eq 'alpha' }) + @($due | Where-Object { (Get-ReleaseKind $_.version) -eq 'beta' })
         return , @($ordered | ForEach-Object { New-PlannedEvent $_ (Get-Cutoff $_) })
     }
@@ -79,17 +80,18 @@ function Invoke-Plan {
     <#
     .SYNOPSIS
     Runs the plan job: reads the run's context from the environment and writes the job's outputs.
+    -Now exists so tests do not depend on the time of day.
     #>
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][string]$CalendarPath,
-        [Parameter(Mandatory)][string]$ConfigPath
+        [Parameter(Mandatory)][string]$ConfigPath,
+        [DateTimeOffset]$Now = [DateTimeOffset]::UtcNow
     )
     if ($env:GITHUB_RUN_ATTEMPT -and $env:GITHUB_RUN_ATTEMPT -ne '1') {
         throw "This is attempt $env:GITHUB_RUN_ATTEMPT of the run, and plan runs once only. Start a new run, so that it reads today's calendar."
     }
     $eventName = $env:GITHUB_EVENT_NAME
-    $now = [DateTimeOffset]::UtcNow
     $rehearsal = $false
     if ($eventName -eq 'workflow_dispatch') {
         if ($env:INPUT_REHEARSAL -notin @('true', 'false')) { throw "rehearsal input must be true or false, got '$env:INPUT_REHEARSAL'." }
