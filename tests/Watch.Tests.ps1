@@ -80,15 +80,14 @@ $nuget = New-NuGet @{ 'BHoM' = $all; 'BHoM.Engine' = $all; 'BHoM.UI' = @('10.1.0
 $a = Invoke-WatchCheck -Calendar $calendar -Config $config -Now (At '2027-01-30T12:37:00Z') -Issues $t -GetIndex $nuget
 Check 'skipped event is checked' (@($t.State.issues).Count -eq 1 -and $t.State.issues[0].title -ceq 'NuGet 10.1.0-alpha.2.0 incomplete on nuget.org' -and $t.State.issues[0].body -like '*marked skip, so this workflow did not publish it*BHoM.UI*') (Summary $t)
 
-# 5. The 14-day window: an event 13 days back is checked, 14 days back and future events are not.
-$t = New-Tracker
+# 5. The window is the 14 days before today. On the 29th, the event dated that day is not flagged although
+# missing, and the one 14 days back is. On the 30th, the 29th's event is flagged and the one 15 days back is not.
 $none = New-NuGet @{}
-$a = Invoke-WatchCheck -Calendar $calendar -Config $config -Now (At '2027-01-28T12:37:00Z') -Issues $t -GetIndex $none
-$inWindow = @($t.State.issues | Where-Object { $_.title -like 'NuGet*' } | ForEach-Object { $_.title })
-$t2 = New-Tracker
-$a = Invoke-WatchCheck -Calendar $calendar -Config $config -Now (At '2027-01-29T00:00:00Z') -Issues $t2 -GetIndex $none
-$outWindow = @($t2.State.issues | Where-Object { $_.title -like 'NuGet*' } | ForEach-Object { $_.title })
-Check 'window is today and the 13 days before it' (($inWindow -join ';') -ceq 'NuGet 10.1.0-alpha.1.0 incomplete on nuget.org' -and ($outWindow -join ';') -ceq 'NuGet 10.1.0-alpha.2.0 incomplete on nuget.org') "28th: [$($inWindow -join '; ')]; 29th: [$($outWindow -join '; ')]"
+function Flagged($Iso) { $t = New-Tracker; Invoke-WatchCheck -Calendar $calendar -Config $config -Now (At $Iso) -Issues $t -GetIndex $none | Out-Null; (@($t.State.issues | Where-Object { $_.title -like 'NuGet*' } | ForEach-Object { $_.title }) -join ';') }
+$on29 = Flagged '2027-01-29T23:59:00Z'
+$on30 = Flagged '2027-01-30T00:00:00Z'
+Check 'event dated today is not flagged, 14 days back is' ($on29 -ceq 'NuGet 10.1.0-alpha.1.0 incomplete on nuget.org') "29th: [$on29]"
+Check 'event dated yesterday is flagged, 15 days back is not' ($on30 -ceq 'NuGet 10.1.0-alpha.2.0 incomplete on nuget.org') "30th: [$on30]"
 
 # 6. A complete version opens nothing.
 $t = New-Tracker
@@ -138,14 +137,14 @@ Check 'nuget.org error: inactivity issue still opens' ($threw -and $t.State.issu
 
 # 11. The entry point, run the way watch.yml runs it: a fresh process in the repository root that imports
 # only Watch.psm1 and takes the mention and run URL from the environment. The calendar is planted with one
-# event dated today, and nuget.org and the issue tracker are stubs, so nothing touches the network.
+# event dated yesterday, and nuget.org and the issue tracker are stubs, so nothing touches the network.
 $tmp = Join-Path ([IO.Path]::GetTempPath()) "watch-test-$PID"
 New-Item -ItemType Directory -Force -Path $tmp | Out-Null
 $saved = @{ WATCH_TEST_CALENDAR = $env:WATCH_TEST_CALENDAR; GITHUB_REPOSITORY = $env:GITHUB_REPOSITORY; GITHUB_TOKEN = $env:GITHUB_TOKEN; MENTION = $env:MENTION; RUN_URL = $env:RUN_URL }
 try {
-    $today = [DateTime]::UtcNow.ToString('yyyy-MM-dd', [Globalization.CultureInfo]::InvariantCulture)
+    $yesterday = [DateTime]::UtcNow.Date.AddDays(-1).ToString('yyyy-MM-dd', [Globalization.CultureInfo]::InvariantCulture)
     $env:WATCH_TEST_CALENDAR = Join-Path $tmp 'calendar.json'
-    Set-Content -LiteralPath $env:WATCH_TEST_CALENDAR -Value "[ { `"date`": `"$today`", `"version`": `"10.1.0-alpha.1.0`" } ]"
+    Set-Content -LiteralPath $env:WATCH_TEST_CALENDAR -Value "[ { `"date`": `"$yesterday`", `"version`": `"10.1.0-alpha.1.0`" } ]"
     $env:GITHUB_REPOSITORY = 'BHoM/nuget-publishing'; $env:GITHUB_TOKEN = 'not-a-token'; $env:MENTION = '@BHoM/release-team'; $env:RUN_URL = 'the-run-url'
     $step = @'
 $ErrorActionPreference = 'Stop'
@@ -166,7 +165,7 @@ $opened | ForEach-Object { Write-Host "OPENED $_" }
     Push-Location -LiteralPath $root
     try { $out = (& $shell -NoProfile -NonInteractive -File $stepFile 2>&1 | Out-String); $code = $LASTEXITCODE }
     finally { Pop-Location }
-    $ok = $code -eq 0 -and $out -like "*opened 'NuGet 10.1.0-alpha.1.0 incomplete on nuget.org'*" -and $out -like "*opened 'Calendar runs out on $today'*" -and $out -notlike '*Scheduled runs stop*' -and
+    $ok = $code -eq 0 -and $out -like "*opened 'NuGet 10.1.0-alpha.1.0 incomplete on nuget.org'*" -and $out -like "*opened 'Calendar runs out on $yesterday'*" -and $out -notlike '*Scheduled runs stop*' -and
         $out -like '*OPENED NuGet 10.1.0-alpha.1.0 incomplete on nuget.org | @BHoM/release-team 16 of 16 packages*Checked by the-run-url.*'
     Check 'Invoke-Watch as watch.yml calls it: reads the calendar, config and environment, opens both issues' $ok "exit $code$(if (-not $ok) { "`n$out" })"
 }
@@ -175,5 +174,5 @@ finally {
     Remove-Item -LiteralPath $tmp -Recurse -Force
 }
 
-Write-Host "PowerShell $($PSVersionTable.PSVersion): 14 cases, $failures failed."
+Write-Host "PowerShell $($PSVersionTable.PSVersion): 15 cases, $failures failed."
 if ($failures -gt 0) { exit 1 }
